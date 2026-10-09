@@ -85,6 +85,21 @@ main{padding-block:22px 60px;display:flex;flex-direction:column;gap:22px}
 .r-acc button:hover{border-color:var(--texto)}
 .r-acc .ok{border-color:var(--verde);color:var(--verde)}
 .r-nota{width:100%;font-size:.85rem;min-height:38px;resize:vertical}
+.pago{font-size:.75rem;font-weight:700;border-radius:999px;padding:3px 10px}
+.pago.pagado{background:rgba(0,158,227,.18);color:#4fc3ff}.pago.pendiente{background:rgba(245,196,0,.15);color:var(--amarillo)}.pago.vencido{background:rgba(255,255,255,.08);color:var(--suave);text-decoration:line-through}
+.res.vencida{opacity:.5}
+.ev.vencida{opacity:.3;text-decoration:line-through}
+.cobros{background:var(--panel);border:1px solid var(--linea);border-radius:20px;padding:16px 18px}
+.cobros summary{cursor:pointer;font-weight:700;font-size:1.05rem}
+.cobros p{color:var(--suave);font-size:.85rem;margin:8px 0 12px}
+.cob-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.cob{background:var(--negro);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.cob b{font-size:.95rem}
+.cob label{display:flex;flex-direction:column;gap:4px;font-size:.78rem;color:var(--suave)}
+.cob input{width:100%}
+.cob-pie{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
+.cob-pie small{color:var(--suave)}
+@media (max-width:760px){.cob-grid{grid-template-columns:1fr}}
 .vacio{color:var(--suave);text-align:center;padding:30px;background:var(--panel);border-radius:18px}
 .creada{color:var(--suave);font-size:.75rem}
 /* Aviso */
@@ -135,6 +150,16 @@ input[type=checkbox]{width:18px;height:18px;accent-color:var(--rojo)}
       <label style="display:flex;gap:6px;align-items:center;color:var(--suave);font-size:.85rem"><input type="checkbox" id="ver-pasadas"> Ver pasadas y canceladas</label>
       <input type="search" id="buscar" placeholder="Buscar nombre, WhatsApp o producto">
     </div>
+    <details class="cobros" id="cobros">
+      <summary>💰 Cobros con Mercado Pago</summary>
+      <p>Poné cuánto se paga para reservar en cada caso. Con $0 no se cobra nada y la reserva queda directo. Si hay monto, el cliente paga con Mercado Pago y tiene 30 minutos; si no paga, el horario se libera.</p>
+      <div class="cob-grid">
+        <div class="cob"><b>🛼 Clases</b><label>Monto ($)<input type="number" min="0" step="100" id="m-clases" inputmode="numeric"></label><label>Qué se paga<input id="c-clases" maxlength="60" placeholder="Seña"></label></div>
+        <div class="cob"><b>🔑 Alquiler</b><label>Monto ($)<input type="number" min="0" step="100" id="m-alquiler" inputmode="numeric"></label><label>Qué se paga<input id="c-alquiler" maxlength="60" placeholder="Seña"></label></div>
+        <div class="cob"><b>🛒 Compra</b><label>Monto ($)<input type="number" min="0" step="100" id="m-compra" inputmode="numeric"></label><label>Qué se paga<input id="c-compra" maxlength="60" placeholder="Seña"></label></div>
+      </div>
+      <div class="cob-pie"><button class="btn" type="button" id="cob-guardar">Guardar montos</button><small id="cob-estado"></small></div>
+    </details>
     <section class="semana">
       <div class="sem-top"><button class="tgl" id="sem-ant" type="button" aria-label="Semana anterior">‹</button><h2 id="sem-tit"></h2><button class="tgl" id="sem-sig" type="button" aria-label="Semana siguiente">›</button></div>
       <div class="grilla" id="grilla"></div>
@@ -187,7 +212,19 @@ async function cargar() {
   $('actualizado').textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
   avisarNuevas(); pintar();
 }
+let pagosVistos = null;
+function avisarPagos() {
+  const pag = new Set(reservas.filter(r => r.pago_estado === 'pagado').map(r => r.id));
+  if (pagosVistos === null) { pagosVistos = pag; return; }
+  const nuevos = reservas.filter(r => pag.has(r.id) && !pagosVistos.has(r.id)); pagosVistos = pag;
+  if (!nuevos.length) return;
+  alarma();
+  nuevos.forEach(r => { const el = document.createElement('div'); el.className = 'toast'; el.style.background = 'linear-gradient(120deg,#009EE3,#0077b3)';
+    el.innerHTML = `<span class="ico">💰</span><div><b>¡Pagó ${esc(plata(r.pago_monto))}!</b><span>${esc(r.nombre)} ${esc(r.apellido)} · ${esc(TIPO[r.tipo].nom)} ${esc(fechaCorta(r.fecha))} ${esc(hhmm(r.hora))} hs</span><small>Tocá para cerrar</small></div><span class="x">✕</span>`;
+    el.addEventListener('click', () => el.remove()); $('toasts').appendChild(el); });
+}
 function avisarNuevas() {
+  avisarPagos();
   const ids = new Set(reservas.map(r => r.id));
   if (vistos === null) { vistos = ids; return; }
   const nuevas = reservas.filter(r => !vistos.has(r.id)); vistos = ids;
@@ -200,6 +237,14 @@ function avisarNuevas() {
   });
   window._nuevas = new Set(nuevas.map(r => r.id));
 }
+const vencida = r => r.pago_estado === 'pendiente' && r.pago_vence && new Date(r.pago_vence).getTime() < Date.now();
+const activa = r => r.estado !== 'cancelada' && !vencida(r);
+const plata = n => '$' + Number(n || 0).toLocaleString('es-AR', { maximumFractionDigits: 0 });
+function chipPago(r) {
+  if (r.pago_estado === 'pagado') return `<span class="pago pagado">💰 Pagó ${plata(r.pago_monto)}</span>`;
+  if (r.pago_estado === 'pendiente') return vencida(r) ? `<span class="pago vencido">Venció sin pagar</span>` : `<span class="pago pendiente">⏳ Esperando pago ${plata(r.pago_monto)}</span>`;
+  return '';
+}
 const fechaCorta = f => { const d = new Date(f + 'T00:00:00'); return `${DN[d.getDay()].slice(0, 3)} ${d.getDate()}/${d.getMonth() + 1}`; };
 async function cambiarEstado(id, estado, nota) {
   const r = reservas.find(x => x.id === id); if (!r) return;
@@ -211,12 +256,12 @@ async function cambiarEstado(id, estado, nota) {
 /* ---- Pintar ---- */
 function visibles() {
   const q = $('buscar').value.trim().toLowerCase(), hoy = iso(hoyBA()), pasadas = $('ver-pasadas').checked;
-  return reservas.filter(r => (filtro === 'todas' || r.tipo === filtro) && (pasadas || (r.fecha >= hoy && r.estado !== 'cancelada'))
+  return reservas.filter(r => (filtro === 'todas' || r.tipo === filtro) && (pasadas || (r.fecha >= hoy && activa(r)))
     && (!q || [r.nombre, r.apellido, r.whatsapp, r.mail, r.dni, JSON.stringify(r.respuestas || {})].join(' ').toLowerCase().includes(q)));
 }
 function pintar() {
   const hoy = hoyBA(), h = iso(hoy), m = iso(sumar(hoy, 1)), s7 = iso(sumar(hoy, 7));
-  const act = reservas.filter(r => r.estado !== 'cancelada');
+  const act = reservas.filter(activa);
   $('k-hoy').textContent = act.filter(r => r.fecha === h).length;
   $('k-man').textContent = act.filter(r => r.fecha === m).length;
   $('k-sem').textContent = act.filter(r => r.fecha >= h && r.fecha <= s7).length;
@@ -228,19 +273,20 @@ function pintarSemana() {
   const dias = Array.from({ length: 6 }, (_, i) => sumar(semIni, i)), hoy = iso(hoyBA());
   $('sem-tit').textContent = `Semana del ${dias[0].getDate()} de ${MS[dias[0].getMonth()]} al ${dias[5].getDate()} de ${MS[dias[5].getMonth()]}`;
   const horas = []; for (let x = 12; x < 19; x++) horas.push(String(x).padStart(2, '0') + ':00', String(x).padStart(2, '0') + ':30');
-  const lista = reservas.filter(r => (filtro === 'todas' || r.tipo === filtro) && ($('ver-pasadas').checked || r.estado !== 'cancelada'));
+  const lista = reservas.filter(r => (filtro === 'todas' || r.tipo === filtro) && ($('ver-pasadas').checked || activa(r)));
   let html = '<div></div>' + dias.map(d => `<div class="cab${iso(d) === hoy ? ' hoy' : ''}">${DN[d.getDay()].slice(0, 3)} ${d.getDate()}</div>`).join('');
   horas.forEach(hr => {
-    html += `<div class="hr">${hr}</div>` + dias.map(d => { const f = iso(d); return `<div class="celda">${lista.filter(r => r.fecha === f && hhmm(r.hora) === hr).map(r => `<button class="ev ${r.tipo} ${r.estado}" data-ir="${r.id}" title="${esc(TIPO[r.tipo].nom + ' · ' + r.nombre + ' ' + r.apellido)}">${TIPO[r.tipo].ico} ${esc(r.nombre)}</button>`).join('')}</div>`; }).join('');
+    html += `<div class="hr">${hr}</div>` + dias.map(d => { const f = iso(d); return `<div class="celda">${lista.filter(r => r.fecha === f && hhmm(r.hora) === hr).map(r => `<button class="ev ${r.tipo} ${r.estado}${vencida(r) ? ' vencida' : ''}" data-ir="${r.id}" title="${esc(TIPO[r.tipo].nom + ' · ' + r.nombre + ' ' + r.apellido)}">${TIPO[r.tipo].ico} ${esc(r.nombre)}</button>`).join('')}</div>`; }).join('');
   });
   $('grilla').innerHTML = html;
 }
 function tarjeta(r) {
   const resp = Object.entries(r.respuestas || {}).filter(([k, v]) => v && k !== 'comentario');
   const wa = waNum(r.whatsapp), msj = `¡Hola ${r.nombre}! Te escribimos de ${r.tipo === 'clases' ? 'NM Roller' : 'Fly Free Urban'} por tu reserva del ${fechaCorta(r.fecha)} a las ${hhmm(r.hora)} hs.`;
-  return `<article class="res ${r.tipo} ${r.estado}${window._nuevas && window._nuevas.has(r.id) ? ' nueva' : ''}" id="r-${r.id}">
+  return `<article class="res ${r.tipo} ${r.estado}${vencida(r) ? ' vencida' : ''}${window._nuevas && window._nuevas.has(r.id) ? ' nueva' : ''}" id="r-${r.id}">
     <div class="r-top"><span class="r-hora">${esc(hhmm(r.hora))}</span><span class="r-tipo ${r.tipo}">${TIPO[r.tipo].ico} ${esc(TIPO[r.tipo].nom)} · ${TIPO[r.tipo].marca}</span><span class="estado ${r.estado}">${esc(r.estado === 'pendiente' ? 'Sin confirmar' : r.estado)}</span></div>
     <div class="r-nom">${esc(r.nombre)} ${esc(r.apellido)}</div>
+    ${chipPago(r) ? `<div>${chipPago(r)}${r.pago_id ? ` <small class="creada">Pago N° ${esc(r.pago_id)}</small>` : ''}</div>` : ''}
     <div class="r-con">${wa ? `<a class="wa" href="https://wa.me/${wa}?text=${encodeURIComponent(msj)}" target="_blank" rel="noopener">💬 ${esc(r.whatsapp)}</a>` : ''}${r.mail ? `<a class="ml" href="mailto:${esc(r.mail)}">✉️ ${esc(r.mail)}</a>` : ''}</div>
     <dl class="r-datos">${resp.map(([k, v]) => `<dt>${esc(ETQ[k] || k)}</dt><dd>${esc(v)}</dd>`).join('')}${r.dni ? `<dt>DNI</dt><dd>${esc(r.dni)}</dd>` : ''}${r.respuestas && r.respuestas.comentario ? `<dt>Comentario</dt><dd>${esc(r.respuestas.comentario)}</dd>` : ''}</dl>
     <textarea class="r-nota" data-nota="${r.id}" placeholder="Nota interna (ej: ya pagó la seña)">${esc(r.nota || '')}</textarea>
@@ -267,8 +313,28 @@ $('sem-ant').addEventListener('click', () => { semIni = sumar(semIni, -7); pinta
 $('sem-sig').addEventListener('click', () => { semIni = sumar(semIni, 7); pintarSemana(); });
 $('refrescar').addEventListener('click', cargar);
 
+/* ---- Cobros ---- */
+async function cargarCobros() {
+  let c = {};
+  try { const r = await fetch(SUPABASE_URL + '/rest/v1/rpc/nm_reservas_config_leer', { method: 'POST', headers: { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json' }, body: '{}' }); if (r.ok) c = await r.json(); } catch (e) {}
+  ['clases', 'alquiler', 'compra'].forEach(t => { $('m-' + t).value = Number((c[t] || {}).monto || 0); $('c-' + t).value = (c[t] || {}).concepto || 'Seña'; });
+  const algo = ['clases', 'alquiler', 'compra'].some(t => Number((c[t] || {}).monto || 0) > 0);
+  $('cob-estado').textContent = algo ? 'Se está cobrando con Mercado Pago.' : 'Ahora no se cobra nada.';
+}
+$('cob-guardar').addEventListener('click', async () => {
+  const b = $('cob-guardar'); b.disabled = true; $('cob-estado').textContent = 'Guardando...';
+  try {
+    for (const t of ['clases', 'alquiler', 'compra']) {
+      const monto = Math.max(0, Math.round(Number($('m-' + t).value) || 0));
+      if (!DEMO) await rpc('nm_reservas_config_guardar', { clave, tipo: t, monto, concepto: $('c-' + t).value.trim() || 'Seña' });
+    }
+    $('cob-estado').textContent = '✅ Guardado. Ya se usa en la página de reservas.';
+  } catch (e) { $('cob-estado').textContent = '❌ No se pudo guardar. Probá de nuevo.'; }
+  b.disabled = false;
+});
+
 /* ---- Entrar / salir ---- */
-function abrir() { $('login').hidden = true; $('app').hidden = false; $('aviso-demo').hidden = !DEMO; pintarSonido(); audio(); cargar(); clearInterval(timer); timer = setInterval(cargar, 15000); }
+function abrir() { $('login').hidden = true; $('app').hidden = false; $('aviso-demo').hidden = !DEMO; pintarSonido(); audio(); cargar(); cargarCobros(); clearInterval(timer); timer = setInterval(cargar, 15000); }
 function salir() { clave = null; guardar('res_clave', null); clearInterval(timer); $('app').hidden = true; $('login').hidden = false; }
 $('salir').addEventListener('click', salir);
 $('f-login').addEventListener('submit', async e => {
@@ -279,7 +345,7 @@ $('f-login').addEventListener('submit', async e => {
 function demo() {
   const hoy = hoyBA(), out = []; const N = ['Julieta Pérez', 'Tomás Díaz', 'Camila Sosa', 'Mateo Ruiz', 'Lucía Acosta', 'Facundo Torres', 'Mica Acosta', 'Agus Gómez'];
   for (let i = 0; i < 14; i++) { const d = sumar(hoy, Math.floor(i / 2)); if (d.getDay() === 0) continue; const tipo = ['clases', 'alquiler', 'compra'][i % 3]; const [n, a] = N[i % N.length].split(' ');
-    out.push({ id: i + 1, creado: new Date(Date.now() - i * 3600e3).toISOString(), tipo, nombre: n, apellido: a, whatsapp: '11' + (40000000 + i * 1234), mail: i % 2 ? n.toLowerCase() + '@mail.com' : null, dni: tipo === 'alquiler' ? String(30000000 + i) : null, fecha: iso(d), hora: ['12:00', '13:30', '15:00', '16:30', '18:00'][i % 5] + ':00', estado: ['pendiente', 'confirmada', 'pendiente', 'hecha'][i % 4], nota: i === 1 ? 'Pagó la seña por transferencia' : null,
+    out.push({ id: i + 1, creado: new Date(Date.now() - i * 3600e3).toISOString(), tipo, nombre: n, apellido: a, whatsapp: '11' + (40000000 + i * 1234), mail: i % 2 ? n.toLowerCase() + '@mail.com' : null, dni: tipo === 'alquiler' ? String(30000000 + i) : null, fecha: iso(d), hora: ['12:00', '13:30', '15:00', '16:30', '18:00'][i % 5] + ':00', estado: ['pendiente', 'confirmada', 'pendiente', 'hecha'][i % 4], pago_estado: tipo === 'alquiler' ? (i % 2 ? 'pagado' : 'pendiente') : 'no_requiere', pago_monto: tipo === 'alquiler' ? 15000 : 0, pago_id: tipo === 'alquiler' && i % 2 ? String(91827364 + i) : null, pago_vence: new Date(Date.now() + 20 * 60000).toISOString(), nota: i === 1 ? 'Pagó la seña por transferencia' : null,
       respuestas: tipo === 'clases' ? { sede: 'Rosedal', para: 'Para mi hijo/a', edad: '9', nivel: 'Nunca patiné', rollers: 'No, necesito alquilar', medio: 'Instagram' } : tipo === 'alquiler' ? { producto: 'Roller + Set de protecciones', talle: '39', sena: '10000', medio: 'WhatsApp' } : { producto: 'Solo rollers', talle: '41', comentario: 'Busco unos para slalom', medio: 'Google' } }); }
   setTimeout(() => { reservas.push({ id: 99, creado: new Date().toISOString(), tipo: 'alquiler', nombre: 'Romina', apellido: 'Gutiérrez', whatsapp: '1155556666', fecha: iso(sumar(hoy, 1)), hora: '14:00:00', estado: 'pendiente', respuestas: { producto: 'Solo rollers', talle: '38', medio: 'Instagram' } }); cargar(); }, 4000);
   return out;

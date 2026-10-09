@@ -74,6 +74,8 @@ textarea{min-height:84px;resize:vertical}
 .ok h2{font-size:1.6rem}
 .ok .cuando{font-size:1.2rem;font-weight:700;margin:8px 0 4px}
 .link{display:inline-block;margin-top:12px;color:var(--acento);font-weight:600}
+.pago-aviso{background:rgba(0,158,227,.12);border:1px solid rgba(0,158,227,.4);border-radius:14px;padding:12px 14px;font-size:.88rem;margin-bottom:10px}
+.pago-aviso b{color:#4fc3ff}
 .nota-pie{text-align:center;color:var(--suave);font-size:.78rem;margin-top:18px}
 @media (max-width:420px){.dos{grid-template-columns:1fr}.caja{padding:22px 16px}}
 @media (prefers-reduced-motion:reduce){.paso.on{animation:none}}
@@ -134,8 +136,18 @@ textarea{min-height:84px;resize:vertical}
       <div class="migas"><button class="volver" type="button" data-volver="3">← Volver</button><div class="barra"><i style="width:95%"></i></div></div>
       <h2 class="titulo-paso">¿Está todo bien?</h2><p class="sub">Revisá tu reserva antes de confirmar.</p>
       <dl class="resumen" id="resumen"></dl>
+      <p class="pago-aviso" id="pago-aviso" hidden></p>
       <p class="error" id="e4"></p>
       <button class="btn" type="button" id="confirmar">Confirmar reserva</button>
+    </section>
+
+    <!-- Pago: vuelta de Mercado Pago -->
+    <section class="paso ok" id="p6">
+      <div class="tilde" id="pg-ico">⏳</div>
+      <h2 id="pg-tit">Estamos confirmando tu pago...</h2>
+      <p class="sub" id="pg-txt">Esto tarda unos segundos.</p>
+      <button class="btn" type="button" id="pg-reintentar" hidden>Volver a intentar el pago</button>
+      <button class="btn" type="button" id="pg-otra" hidden style="background:transparent;border:1.5px solid var(--linea);color:var(--texto)">Hacer otra reserva</button>
     </section>
 
     <!-- Paso 5: listo -->
@@ -182,6 +194,12 @@ const TIPOS = {
 };
 const MEDIOS = ['Instagram', 'WhatsApp', 'Google', 'Me lo recomendaron', 'Ya soy de NM', 'Otro'];
 let st = { tipo: null, resp: {}, fecha: null, hora: null, ocupados: new Set() };
+let COBRO = {};
+const plata = n => '$' + Number(n || 0).toLocaleString('es-AR', { maximumFractionDigits: 0 });
+const api = (fn, body) => fetch(SUPABASE_URL + '/rest/v1/rpc/' + fn, { method: 'POST', headers: { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+const mpApi = body => fetch(SUPABASE_URL + '/functions/v1/nm-mp', { method: 'POST', headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || 'Error ' + r.status); return d; });
+(async () => { try { const r = await api('nm_reservas_config_leer'); if (r.ok) COBRO = await r.json(); } catch (e) {} })();
+const montoTipo = t => Number((COBRO[t] || {}).monto || 0);
 
 function ir(n) {
   document.querySelectorAll('.paso').forEach(p => p.classList.toggle('on', p.id === 'p' + n));
@@ -278,7 +296,12 @@ $('f3').addEventListener('submit', e => {
   const filas = [['Qué', TIPOS[st.tipo].tit], ['Cuándo', fechaLarga(st.fecha, st.hora)], ...TIPOS[st.tipo].preguntas.filter(q => st.resp[q.id]).map(q => [q.lab.replace(/[¿?]/g, ''), st.resp[q.id]]), ['Nombre', st.datos.nombre + ' ' + st.datos.apellido], ['WhatsApp', st.datos.whatsapp]];
   if (st.datos.mail) filas.push(['Mail', st.datos.mail]);
   if (st.datos.dni) filas.push(['DNI', st.datos.dni]);
+  const m = montoTipo(st.tipo), conc = (COBRO[st.tipo] || {}).concepto || 'Seña';
+  if (m > 0) filas.push([conc + ' a pagar', plata(m)]);
   $('resumen').innerHTML = filas.map(([a, b]) => `<div><dt>${esc(a)}</dt><dd>${esc(b)}</dd></div>`).join('');
+  $('pago-aviso').hidden = !(m > 0);
+  if (m > 0) $('pago-aviso').innerHTML = `Para confirmar el turno pagás <b>${esc(conc.toLowerCase())} de ${plata(m)}</b> con Mercado Pago: tarjeta, débito, dinero en cuenta o efectivo. Tenés 30 minutos para pagar; si no, el horario se libera.`;
+  $('confirmar').textContent = m > 0 ? `Confirmar y pagar ${plata(m)}` : 'Confirmar reserva';
   $('e4').textContent = ''; ir(4);
 });
 const vistaPrevia = location.protocol === 'file:' || /claude\.ai|claudeusercontent/.test(location.hostname);
@@ -288,6 +311,19 @@ $('confirmar').addEventListener('click', async () => {
     if (!vistaPrevia) {
       const r = await fetch(SUPABASE_URL + '/rest/v1/rpc/nm_reserva_crear', { method: 'POST', headers: { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ datos: { tipo: st.tipo, ...st.datos, fecha: st.fecha, hora: st.hora, respuestas: st.resp } }) });
       if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.message || 'error'); }
+      const res = await r.json();
+      if (res.token && Number(res.monto) > 0) {
+        guardarPago({ id: res.id, token: res.token, tipo: st.tipo, cuando: fechaLarga(st.fecha, st.hora) });
+        b.textContent = 'Abriendo Mercado Pago...';
+        try { await irAPagar(res.id, res.token); }
+        catch (err) {
+          ir(6); pantallaPago('⚠️', 'Tu turno quedó guardado, falta el pago', 'No se pudo abrir Mercado Pago (' + err.message + '). Tenés 30 minutos para intentarlo de nuevo.', true);
+          $('pg-reintentar').onclick = async () => { try { await irAPagar(res.id, res.token); } catch (e2) { $('pg-txt').textContent = 'Sigue sin abrir (' + e2.message + '). Escribinos por WhatsApp.'; } };
+          $('pg-otra').hidden = false; $('pg-otra').onclick = () => { location.href = location.pathname; };
+        }
+        b.disabled = false; b.textContent = 'Confirmar reserva';
+        return;
+      }
     }
     $('ok-cuando').textContent = fechaLarga(st.fecha, st.hora);
     $('ok-texto').textContent = st.tipo === 'clases' ? 'Te vamos a escribir por WhatsApp para confirmarte la clase. ¡Nos vemos en la pista! 🛼' : 'Te vamos a escribir por WhatsApp para confirmarte el turno. Si alquilás, traé tu DNI. 🛼';
@@ -301,6 +337,38 @@ $('confirmar').addEventListener('click', async () => {
   }
   b.disabled = false; b.textContent = 'Confirmar reserva';
 });
+/* ---- Pago con Mercado Pago ---- */
+function guardarPago(x) { try { localStorage.setItem('nm_pago', JSON.stringify(x)); } catch (e) {} }
+function leerPago() { try { return JSON.parse(localStorage.getItem('nm_pago') || 'null'); } catch (e) { return null; } }
+async function irAPagar(id, token) {
+  const d = await mpApi({ accion: 'crear', reserva_id: id, token, volver: location.origin + location.pathname });
+  location.href = d.link;
+}
+function pantallaPago(ico, tit, txt, reintentar) {
+  $('pg-ico').textContent = ico; $('pg-tit').textContent = tit; $('pg-txt').textContent = txt;
+  $('pg-reintentar').hidden = !reintentar; $('pg-otra').hidden = !!reintentar && ico === '⏳';
+}
+async function volvioDePago() {
+  const q = new URLSearchParams(location.search); const id = q.get('r'), token = q.get('t'), res = q.get('pago');
+  if (!id || !token || !res) return false;
+  const g = leerPago() || {};
+  if (g.tipo) { st.tipo = g.tipo; document.body.dataset.marca = g.tipo === 'clases' ? 'nm' : 'flyfree'; }
+  ir(6); history.replaceState(null, '', location.pathname);
+  $('pg-reintentar').onclick = async () => { $('pg-reintentar').disabled = true; try { await irAPagar(id, token); } catch (e) { pantallaPago('⚠️', 'No se pudo abrir el pago', e.message, false); } $('pg-reintentar').disabled = false; };
+  $('pg-otra').onclick = () => { location.href = location.pathname; };
+  pantallaPago('⏳', 'Estamos confirmando tu pago...', 'Esto tarda unos segundos.', false);
+  for (let i = 0; i < 12; i++) {
+    let d = {}; try { d = await mpApi({ accion: 'estado', reserva_id: id, token }); } catch (e) {}
+    if (d.pago_estado === 'pagado') { pantallaPago('✓', '¡Pago recibido! Tu turno está confirmado', (g.cuando ? g.cuando + '. ' : '') + 'Te vamos a escribir por WhatsApp. ¡Nos vemos! 🛼', false); $('pg-otra').hidden = false; guardarPago(null); return true; }
+    if (res === 'error') break;
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  if (res === 'error') pantallaPago('✕', 'El pago no se completó', 'Tu turno sigue guardado unos minutos. Podés volver a intentarlo.', true);
+  else pantallaPago('⏳', 'Tu pago está en proceso', 'Si pagaste en efectivo o tarda en acreditarse, te avisamos por WhatsApp cuando se confirme.', true);
+  $('pg-otra').hidden = false;
+  return true;
+}
+volvioDePago();
 $('otra').addEventListener('click', () => { document.body.dataset.marca = 'nm'; st = { tipo: null, resp: {}, fecha: null, hora: null, ocupados: new Set() }; ['nombre', 'apellido', 'whatsapp', 'mail', 'dni'].forEach(id => $(id).value = ''); ir(0); });
 </script>
 </body>
