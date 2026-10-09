@@ -168,7 +168,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const SEDES = ["Belgrano", "Colegiales", "Devoto", "F. Medicina", "La Pampa", "Madero", "Rivadavia", "Rosedal", "Vicente López", "Villa Real", "Villaluro"];
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const PRODUCTOS_ALQ = ['Alquiler Especial del Amor', 'Roller + Set de protecciones', 'Solo set de protecciones', 'Solo rollers', 'Monopatín'];
+const PRODUCTOS_ALQ = ['Alquiler Roller', 'Alquiler Protecciones', 'Alquiler Monopatín', 'Clase + Alquiler'];
 const PRODUCTOS_COMPRA = ['Roller + Set de protecciones', 'Solo rollers', 'Solo set de protecciones', 'Monopatín', 'Accesorios', 'Reparación / Cambio'];
 const TALLES = Array.from({ length: 17 }, (_, i) => String(29 + i));
 const TIPOS = {
@@ -183,7 +183,6 @@ const TIPOS = {
   alquiler: { marca: 'flyfree', tit: 'Alquiler', sub: 'Elegí qué querés alquilar y tu talle.', preguntas: [
     { id: 'producto', lab: '¿Qué querés alquilar?', tipo: 'chips', ops: PRODUCTOS_ALQ, req: true },
     { id: 'talle', lab: 'Talle de calzado (de zapatillas)', tipo: 'select', ops: TALLES, req: true, nota: 'Así te preparamos los rollers justos.' },
-    { id: 'sena', lab: '¿Cuánto abonaste de seña?', tipo: 'texto', ph: 'Ej: 10000 (dejalo vacío si todavía no)', max: 20, opc: true },
     { id: 'comentario', lab: '¿Algo que nos quieras contar?', tipo: 'area', opc: true }
   ] },
   compra: { marca: 'flyfree', tit: 'Compra', sub: 'Contanos qué estás buscando.', preguntas: [
